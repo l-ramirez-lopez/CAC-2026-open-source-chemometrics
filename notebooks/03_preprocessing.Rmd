@@ -131,7 +131,7 @@ Key parameters:
 
 | Parameter | Argument | Typical values |
 |-----------|----------|----------------|
-| Window width | `w` | 5–21 (odd number) |
+| Window width | `w` | 5–21 (odd number; odd windows centre symmetrically on the target point) |
 | Polynomial order | `p` | 2–4 |
 | Derivative order | `m` | 0 (smooth), 1, 2 |
 

@@ -45,7 +45,7 @@ Key validation statistics:
 | Statistic | Formula | Interpretation |
 |-----------|---------|---------------|
 | RMSEP | $\sqrt{\frac{1}{n}\sum(\hat{y}_i - y_i)^2}$ | Prediction error; same units as **y** |
-| Bias | $\frac{1}{n}\sum(\hat{y}_i - y_i)$ | Systematic over/under-prediction |
+| Bias | $\frac{1}{n}\sum(\hat{y}_{\text{pred},i} - y_{\text{obs},i})$ | Systematic over/under-prediction |
 | RPD | $\text{SD}(y_{\text{test}}) / \text{RMSEP}$ | Performance relative to population spread |
 | RPIQ | $\text{IQR}(y_{\text{test}}) / \text{RMSEP}$ | As RPD but robust to outliers |
 | R² | $1 - \frac{\sum(y_i - \hat{y}_i)^2}{\sum(y_i - \bar{y})^2}$ | Coefficient of determination |

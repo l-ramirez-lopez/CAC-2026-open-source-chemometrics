@@ -92,8 +92,8 @@ cat("Test samples:       ", nrow(X_test), "\n")
 pls_model <- plsr(
   y_cal ~ X_cal,
   ncomp      = 20,
-  validation = "CV",       # leave-one-out cross-validation
-  segments   = 10,         # 10-fold CV (faster than LOO for large datasets)
+  validation = "CV",       # 10-fold cross-validation
+  segments   = 10,         # number of CV folds
   method     = "oscorespls"
 )
 ```

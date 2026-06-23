@@ -189,8 +189,8 @@ n_pc <- 5  # number of PCs to use for outlier detection
 # T² statistic
 scores_5pc <- as.matrix(scores[, paste0("PC", 1:n_pc)])
 T2 <- apply(scores_5pc, 1, function(x) {
-  lambda <- var_exp[1:n_pc] * (nrow(spectra_snv) - 1)
-  sum(x^2 / lambda)
+  eigenvalues <- var_exp[1:n_pc] * (nrow(spectra_snv) - 1)
+  sum(x^2 / eigenvalues)
 })
 
 # Q residuals (reconstruction error)
