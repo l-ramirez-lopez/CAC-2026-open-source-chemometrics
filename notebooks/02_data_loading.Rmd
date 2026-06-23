@@ -1,0 +1,196 @@
+---
+title: "02 — Data Loading and Spectral Visualisation"
+subtitle: "CAC 2026 · Open-source chemometrics for real-world NIR handheld spectroscopy"
+author: "Leonardo Ramirez-Lopez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 9,
+  fig.height = 5
+)
+```
+
+```{r packages}
+library(prospectr)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+---
+
+## 2.1 Loading spectral data
+
+### From the built-in `NIRsoil` dataset
+
+```{r load-data}
+data(NIRsoil)
+
+# Spectra matrix: rows = samples, columns = wavelengths
+spectra  <- NIRsoil$spc
+ref_data <- NIRsoil[c("Nt", "Ciso", "CEC", "moisture")]
+
+wavelengths <- as.numeric(colnames(spectra))
+cat("Wavelength range:", range(wavelengths), "nm\n")
+cat("Number of samples:", nrow(spectra), "\n")
+```
+
+### Loading your own CSV data
+
+If you have spectra exported from a handheld instrument as a CSV file, use:
+
+```{r load-csv, eval=FALSE}
+# Adjust the path and column names to match your file
+raw <- read.csv("../data/my_spectra.csv", check.names = FALSE)
+
+# Identify which columns are wavelengths (numeric column names)
+wl_cols   <- grep("^[0-9]", names(raw), value = TRUE)
+meta_cols <- setdiff(names(raw), wl_cols)
+
+spectra     <- as.matrix(raw[, wl_cols])
+wavelengths <- as.numeric(wl_cols)
+ref_data    <- raw[, meta_cols, drop = FALSE]
+```
+
+---
+
+## 2.2 Quick data inspection
+
+```{r inspect}
+# Check for missing values
+cat("Missing values in spectra:", sum(is.na(spectra)), "\n")
+cat("Missing values in Nt:     ", sum(is.na(ref_data$Nt)), "\n")
+
+# Absorbance range
+cat("Absorbance range:", round(range(spectra), 3), "\n")
+```
+
+---
+
+## 2.3 Spectral visualisation
+
+### Plot all spectra
+
+```{r plot-all-spectra}
+# Convert to long format for ggplot2
+spectra_long <- spectra |>
+  as.data.frame() |>
+  tibble::rownames_to_column("sample") |>
+  tidyr::pivot_longer(-sample, names_to = "wavelength", values_to = "absorbance") |>
+  dplyr::mutate(wavelength = as.numeric(wavelength))
+
+ggplot(spectra_long, aes(x = wavelength, y = absorbance, group = sample)) +
+  geom_line(alpha = 0.15, colour = "#2166AC") +
+  labs(
+    title = "NIRsoil — raw absorbance spectra",
+    x     = "Wavelength (nm)",
+    y     = "Absorbance"
+  ) +
+  theme_bw()
+```
+
+### Colour spectra by reference value
+
+Colouring by a reference property reveals whether spectral variation is related
+to the analyte of interest.
+
+```{r plot-coloured}
+spectra_long_nt <- spectra |>
+  as.data.frame() |>
+  tibble::rownames_to_column("sample") |>
+  dplyr::mutate(Nt = ref_data$Nt) |>
+  tidyr::pivot_longer(-c(sample, Nt),
+                      names_to  = "wavelength",
+                      values_to = "absorbance") |>
+  dplyr::mutate(wavelength = as.numeric(wavelength)) |>
+  dplyr::filter(!is.na(Nt))
+
+ggplot(spectra_long_nt, aes(x = wavelength, y = absorbance,
+                             group = sample, colour = Nt)) +
+  geom_line(alpha = 0.4) +
+  scale_colour_viridis_c(option = "plasma", name = "Nt (%)") +
+  labs(
+    title = "NIRsoil spectra coloured by total nitrogen (Nt)",
+    x     = "Wavelength (nm)",
+    y     = "Absorbance"
+  ) +
+  theme_bw()
+```
+
+---
+
+## 2.4 Distribution of the reference property
+
+```{r hist-nt}
+nt_df <- data.frame(Nt = ref_data$Nt) |> dplyr::filter(!is.na(Nt))
+
+ggplot(nt_df, aes(x = Nt)) +
+  geom_histogram(bins = 30, fill = "#2166AC", colour = "white") +
+  geom_vline(xintercept = mean(nt_df$Nt), linetype = "dashed",
+             colour = "tomato", linewidth = 0.8) +
+  labs(
+    title = "Distribution of total nitrogen (Nt)",
+    x     = "Nt (%)",
+    y     = "Count"
+  ) +
+  theme_bw()
+```
+
+```{r summary-nt}
+summary(nt_df$Nt)
+```
+
+---
+
+## 2.5 Single-sample spectrum
+
+```{r single-spectrum}
+sample_idx <- 1
+single_df  <- data.frame(
+  wavelength = wavelengths,
+  absorbance = spectra[sample_idx, ]
+)
+
+ggplot(single_df, aes(x = wavelength, y = absorbance)) +
+  geom_line(colour = "#1B7837", linewidth = 0.8) +
+  annotate("rect", xmin = 1400, xmax = 1450,
+           ymin = -Inf, ymax = Inf, alpha = 0.15, fill = "orange") +
+  annotate("rect", xmin = 1900, xmax = 1960,
+           ymin = -Inf, ymax = Inf, alpha = 0.15, fill = "orange") +
+  annotate("text", x = 1425, y = max(single_df$absorbance) * 0.95,
+           label = "O–H", colour = "darkorange", size = 3) +
+  annotate("text", x = 1930, y = max(single_df$absorbance) * 0.95,
+           label = "O–H", colour = "darkorange", size = 3) +
+  labs(
+    title   = paste("Single NIR spectrum — sample", sample_idx),
+    subtitle = "Shaded regions: water absorption bands",
+    x = "Wavelength (nm)",
+    y = "Absorbance"
+  ) +
+  theme_bw()
+```
+
+---
+
+## 2.6 Summary
+
+In this notebook we have:
+
+* Loaded the `NIRsoil` dataset from the `prospectr` package.
+* Visualised the full spectral stack and related spectral features to the
+  analyte of interest.
+* Examined the distribution of the reference property.
+
+In **Notebook 03** we will apply spectral pre-processing to reduce physical
+variation unrelated to chemical composition.

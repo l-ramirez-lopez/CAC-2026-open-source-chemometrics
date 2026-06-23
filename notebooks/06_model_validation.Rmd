@@ -1,0 +1,280 @@
+---
+title: "06 — Model Validation and Diagnostics"
+subtitle: "CAC 2026 · Open-source chemometrics for real-world NIR handheld spectroscopy"
+author: "Leonardo Ramirez-Lopez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 8,
+  fig.height = 5
+)
+```
+
+```{r packages}
+library(prospectr)
+library(pls)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+```
+
+---
+
+## 6.1 Why validate?
+
+A good calibration **RMSEC** alone is insufficient evidence of a useful model.
+A model can over-fit the calibration data, performing well on calibration samples
+but poorly on new, unseen samples.
+
+**Validation** on an independent test set provides an unbiased estimate of
+prediction ability in practice.
+
+Key validation statistics:
+
+| Statistic | Formula | Interpretation |
+|-----------|---------|---------------|
+| RMSEP | $\sqrt{\frac{1}{n}\sum(\hat{y}_i - y_i)^2}$ | Prediction error; same units as **y** |
+| Bias | $\frac{1}{n}\sum(\hat{y}_i - y_i)$ | Systematic over/under-prediction |
+| RPD | $\text{SD}(y_{\text{test}}) / \text{RMSEP}$ | Performance relative to population spread |
+| RPIQ | $\text{IQR}(y_{\text{test}}) / \text{RMSEP}$ | As RPD but robust to outliers |
+| R² | $1 - \frac{\sum(y_i - \hat{y}_i)^2}{\sum(y_i - \bar{y})^2}$ | Coefficient of determination |
+
+---
+
+## 6.2 Rebuild the calibration model
+
+We reproduce the full workflow from Notebook 05 to have all objects available.
+
+```{r rebuild-model}
+data(NIRsoil)
+
+spectra     <- NIRsoil$spc
+wavelengths <- as.numeric(colnames(spectra))
+spectra_snv <- standardNormalVariate(spectra)
+
+keep <- !is.na(NIRsoil$Nt)
+X    <- spectra_snv[keep, ]
+y    <- NIRsoil$Nt[keep]
+
+set.seed(42)
+ks <- kenStone(X, k = round(nrow(X) * 0.7), metric = "mahal", pc = 10)
+
+X_cal  <- X[ks$model, ]; y_cal  <- y[ks$model]
+X_test <- X[ks$test,  ]; y_test <- y[ks$test]
+
+pls_model <- plsr(
+  y_cal ~ X_cal,
+  ncomp      = 20,
+  validation = "CV",
+  segments   = 10,
+  method     = "oscorespls"
+)
+
+# Select optimal ncomp
+rmsecv    <- RMSEP(pls_model, estimate = "CV")$val[1, 1, ]
+opt_ncomp <- (0:(length(rmsecv) - 1))[which.min(rmsecv)]
+cat("Optimal LVs:", opt_ncomp, "\n")
+```
+
+---
+
+## 6.3 Predictions on the test set
+
+```{r test-predictions}
+y_hat_test <- predict(pls_model, newdata = X_test, ncomp = opt_ncomp)[, , 1]
+```
+
+---
+
+## 6.4 Validation statistics
+
+```{r validation-stats}
+val_stats <- function(y_obs, y_pred) {
+  n    <- length(y_obs)
+  res  <- y_pred - y_obs
+  rmse <- sqrt(mean(res^2))
+  bias <- mean(res)
+  r2   <- 1 - sum(res^2) / sum((y_obs - mean(y_obs))^2)
+  rpd  <- sd(y_obs) / rmse
+  rpiq <- IQR(y_obs) / rmse
+  data.frame(n = n, RMSE = rmse, Bias = bias, R2 = r2, RPD = rpd, RPIQ = rpiq)
+}
+
+# Calibration
+y_hat_cal <- predict(pls_model, ncomp = opt_ncomp)[, , 1]
+stats_cal  <- val_stats(y_cal, y_hat_cal)
+
+# Cross-validation
+y_hat_cv <- pls_model$validation$pred[, 1, opt_ncomp]
+stats_cv  <- val_stats(y_cal, y_hat_cv)
+
+# External test
+stats_test <- val_stats(y_test, y_hat_test)
+
+# Summary table
+stats_all <- rbind(
+  data.frame(Set = "Calibration",     stats_cal),
+  data.frame(Set = "Cross-validation", stats_cv),
+  data.frame(Set = "Test",            stats_test)
+)
+
+knitr::kable(stats_all, digits = 4,
+             caption = paste0("Validation statistics — PLS (", opt_ncomp, " LVs), Nt (%)"))
+```
+
+### Interpreting RPD
+
+| RPD range | Interpretation |
+|-----------|---------------|
+| < 1.5 | Model not useful for prediction |
+| 1.5 – 2.0 | Rough screening only |
+| 2.0 – 2.5 | Approximate quantitative prediction |
+| 2.5 – 3.0 | Good quantitative prediction |
+| > 3.0 | Excellent quantitative prediction |
+
+*(Dunn et al., 2002; Williams & Norris, 2001)*
+
+---
+
+## 6.5 Predicted vs measured plots
+
+```{r pred-vs-meas}
+# Combine calibration and test data for a joint plot
+plot_df <- bind_rows(
+  data.frame(measured = y_cal,  predicted = y_hat_cal,
+             set = "Calibration"),
+  data.frame(measured = y_test, predicted = y_hat_test,
+             set = "Test")
+)
+
+ggplot(plot_df, aes(x = measured, y = predicted, colour = set)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  scale_colour_manual(values = c("Calibration" = "#2166AC",
+                                  "Test"        = "tomato")) +
+  labs(
+    title  = paste0("Predicted vs measured Nt — PLS (", opt_ncomp, " LVs)"),
+    x      = "Measured Nt (%)",
+    y      = "Predicted Nt (%)",
+    colour = NULL
+  ) +
+  coord_equal() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+---
+
+## 6.6 Residual diagnostics
+
+```{r residual-plot}
+resid_df <- data.frame(
+  measured   = y_test,
+  predicted  = y_hat_test,
+  residual   = y_hat_test - y_test
+)
+
+p_hist <- ggplot(resid_df, aes(x = residual)) +
+  geom_histogram(bins = 20, fill = "#2166AC", colour = "white") +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "tomato") +
+  labs(title = "Residual distribution",
+       x = "Residual (predicted − measured)", y = "Count") +
+  theme_bw()
+
+p_vs <- ggplot(resid_df, aes(x = predicted, y = residual)) +
+  geom_point(alpha = 0.6, colour = "#2166AC") +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "tomato") +
+  labs(title = "Residuals vs fitted",
+       x = "Predicted Nt (%)", y = "Residual") +
+  theme_bw()
+
+p_hist + p_vs
+```
+
+A well-behaved model should show:
+* Residuals roughly symmetric around zero (no systematic bias).
+* No funnel pattern (homoscedastic errors).
+* No trend in residuals vs fitted values.
+
+---
+
+## 6.7 Leverage and influence
+
+Samples with high **leverage** (far from the centroid in X-space) may
+disproportionately influence the model.  `pls` provides the hat-values
+(diagonal of the hat matrix) to assess leverage.
+
+```{r leverage}
+hat_cal  <- hatvalues(pls_model, ncomp = opt_ncomp)
+infl_df  <- data.frame(
+  sample    = seq_along(hat_cal),
+  leverage  = hat_cal,
+  residual  = y_hat_cal - y_cal
+)
+
+ggplot(infl_df, aes(x = leverage, y = residual)) +
+  geom_point(alpha = 0.6, colour = "#2166AC") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 2 * (opt_ncomp + 1) / nrow(X_cal),
+             linetype = "dashed", colour = "tomato") +
+  labs(
+    title    = "Leverage vs residuals (calibration)",
+    subtitle = "Dashed vertical line: leverage threshold = 2(k+1)/n",
+    x = "Leverage (hat value)",
+    y = "Calibration residual"
+  ) +
+  theme_bw()
+```
+
+---
+
+## 6.8 Reporting model performance
+
+When reporting a NIR calibration model, always include:
+
+1. **Pre-processing** applied and parameters used.
+2. **Number of latent variables** and selection criterion.
+3. **Calibration statistics**: n, RMSEC, R²_c.
+4. **Cross-validation statistics**: RMSECV, R²_cv.
+5. **External validation statistics**: RMSEP, Bias, R²_p, RPD, RPIQ, n_test.
+6. **Scatter plot** of predicted vs measured for both sets.
+7. **Population description**: mean, SD, and range of the reference property.
+
+---
+
+## 6.9 Summary
+
+In this final notebook we:
+
+* Evaluated the PLS model on an independent test set.
+* Computed RMSEP, Bias, R², RPD and RPIQ.
+* Examined residuals for systematic errors.
+* Assessed sample leverage and influence.
+
+### Next steps
+
+* Explore **local / memory-based** modelling with `resemble::mbl()` for
+  heterogeneous datasets.
+* Investigate **variable selection** methods (iPLS, VIP, competitive adaptive
+  reweighted sampling).
+* Apply the calibration model to **new handheld measurements** collected in
+  the field.
+
+---
+
+## Session information
+
+```{r session-info}
+sessionInfo()
+```

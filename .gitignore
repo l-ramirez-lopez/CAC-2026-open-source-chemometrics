@@ -1,0 +1,14 @@
+# R artifacts
+.Rhistory
+.RData
+.Rproj.user/
+*.Rout
+
+# Notebook output files
+notebooks/*.html
+notebooks/*_cache/
+notebooks/*_files/
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,246 @@
+---
+title: "04 — Exploratory Data Analysis with PCA"
+subtitle: "CAC 2026 · Open-source chemometrics for real-world NIR handheld spectroscopy"
+author: "Leonardo Ramirez-Lopez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 8,
+  fig.height = 5.5
+)
+```
+
+```{r packages}
+library(prospectr)
+library(resemble)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+```
+
+```{r load-data}
+data(NIRsoil)
+spectra     <- NIRsoil$spc
+ref_data    <- NIRsoil[c("Nt", "Ciso", "CEC", "moisture")]
+wavelengths <- as.numeric(colnames(spectra))
+
+# Apply SNV pre-processing
+spectra_snv <- standardNormalVariate(spectra)
+```
+
+---
+
+## 4.1 Why PCA?
+
+Principal component analysis (PCA) projects the high-dimensional spectral matrix
+(**n** samples × **p** wavelengths) into a low-dimensional space of **principal
+components** (PCs) that capture maximum variance.
+
+Benefits for spectroscopy:
+
+* **Visualise** the overall spread and structure of the dataset.
+* **Detect outliers** — unusual samples that may be mislabelled or contaminated.
+* **Understand** which wavelength regions drive the main sources of variation.
+* **Compress** spectra into a compact set of scores for subsequent modelling.
+
+---
+
+## 4.2 Computing PCA with `resemble`
+
+The `resemble` package provides the `orthoProjection()` function for efficient
+PCA and PLS projection of spectral data.
+
+```{r pca-resemble}
+pca_result <- orthoProjection(
+  Xr = spectra_snv,    # input matrix (pre-processed spectra)
+  pc = 20,             # maximum number of components to extract
+  method = "pca",      # principal component analysis
+  center = TRUE,
+  scale  = FALSE
+)
+
+# Variance explained
+var_exp <- pca_result$variance$x_var
+cumvar  <- cumsum(var_exp)
+
+var_df <- data.frame(
+  PC      = seq_along(var_exp),
+  VarExp  = var_exp * 100,
+  CumVar  = cumvar * 100
+)
+
+head(var_df, 10)
+```
+
+```{r scree-plot}
+ggplot(var_df[1:15, ], aes(x = PC)) +
+  geom_col(aes(y = VarExp), fill = "#2166AC", alpha = 0.7) +
+  geom_line(aes(y = CumVar), colour = "tomato", linewidth = 0.8) +
+  geom_point(aes(y = CumVar), colour = "tomato", size = 2) +
+  scale_y_continuous(
+    name     = "Variance explained (%)",
+    sec.axis = sec_axis(~ ., name = "Cumulative variance (%)")
+  ) +
+  scale_x_continuous(breaks = 1:15) +
+  labs(title = "PCA scree plot — NIRsoil (SNV)", x = "Principal component") +
+  theme_bw()
+```
+
+> **Rule of thumb**: retain enough PCs to explain ≥ 99% of spectral variance for
+> exploratory purposes.  For calibration, the optimal number of PLS components
+> is selected by cross-validation (Notebook 05).
+
+---
+
+## 4.3 Score plots
+
+### PC1 vs PC2
+
+```{r scores-pc12}
+scores <- as.data.frame(pca_result$scores)
+scores$Nt <- ref_data$Nt
+
+ggplot(scores, aes(x = PC1, y = PC2, colour = Nt)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_colour_viridis_c(option = "plasma", name = "Nt (%)") +
+  labs(
+    title = "PCA score plot — PC1 vs PC2",
+    subtitle = paste0(
+      "PC1: ", round(var_df$VarExp[1], 1), "% | ",
+      "PC2: ", round(var_df$VarExp[2], 1), "% variance explained"
+    )
+  ) +
+  theme_bw()
+```
+
+Samples are coloured by total nitrogen.  A gradient along the principal
+components suggests that spectral variation is correlated with Nt.
+
+### PC1 vs PC3
+
+```{r scores-pc13}
+ggplot(scores, aes(x = PC1, y = PC3, colour = Nt)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_colour_viridis_c(option = "plasma", name = "Nt (%)") +
+  labs(
+    title = "PCA score plot — PC1 vs PC3",
+    subtitle = paste0(
+      "PC1: ", round(var_df$VarExp[1], 1), "% | ",
+      "PC3: ", round(var_df$VarExp[3], 1), "% variance explained"
+    )
+  ) +
+  theme_bw()
+```
+
+---
+
+## 4.4 Loadings plots
+
+PCA loadings reveal which wavelengths contribute most to each component.
+
+```{r loadings}
+loadings <- as.data.frame(pca_result$loadings)
+loadings$wavelength <- wavelengths
+
+p1 <- ggplot(loadings, aes(x = wavelength, y = PC1)) +
+  geom_line(colour = "#1B7837") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Wavelength (nm)", y = "Loading", title = "PC1 loadings") +
+  theme_bw()
+
+p2 <- ggplot(loadings, aes(x = wavelength, y = PC2)) +
+  geom_line(colour = "#762A83") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Wavelength (nm)", y = "Loading", title = "PC2 loadings") +
+  theme_bw()
+
+p1 / p2
+```
+
+---
+
+## 4.5 Outlier detection
+
+### Hotelling's T² and Q residuals
+
+Two statistics are commonly used to identify spectral outliers:
+
+* **Hotelling's T²** measures how far a sample is from the centre of the
+  multivariate space spanned by the retained PCs.
+* **Q residual** (also called SPE, Squared Prediction Error) measures how well
+  the retained PCs reconstruct the original spectrum — samples with high Q are
+  not well described by the model.
+
+```{r outliers}
+n_pc <- 5  # number of PCs to use for outlier detection
+
+# T² statistic
+scores_5pc <- as.matrix(scores[, paste0("PC", 1:n_pc)])
+T2 <- apply(scores_5pc, 1, function(x) {
+  lambda <- var_exp[1:n_pc] * (nrow(spectra_snv) - 1)
+  sum(x^2 / lambda)
+})
+
+# Q residuals (reconstruction error)
+recon   <- scores_5pc %*% t(pca_result$loadings[, 1:n_pc])
+Q_resid <- rowSums((spectra_snv - recon)^2)
+
+# Thresholds (95th percentile)
+T2_thresh <- quantile(T2,     0.95)
+Q_thresh  <- quantile(Q_resid, 0.95)
+
+outlier_df <- data.frame(
+  sample    = seq_len(nrow(spectra_snv)),
+  T2        = T2,
+  Q         = Q_resid,
+  outlier_T2 = T2 > T2_thresh,
+  outlier_Q  = Q_resid > Q_thresh
+)
+
+ggplot(outlier_df, aes(x = T2, y = Q,
+                        colour = outlier_T2 | outlier_Q)) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_vline(xintercept = T2_thresh, linetype = "dashed", colour = "tomato") +
+  geom_hline(yintercept = Q_thresh,  linetype = "dashed", colour = "tomato") +
+  scale_colour_manual(values = c("FALSE" = "#2166AC", "TRUE" = "tomato"),
+                      name = "Outlier") +
+  labs(
+    title = "Outlier detection — Hotelling T² vs Q residuals",
+    x = "Hotelling T²", y = "Q residual (SPE)"
+  ) +
+  theme_bw()
+```
+
+```{r outlier-count}
+cat("Samples flagged by T² (> 95th percentile):", sum(outlier_df$outlier_T2), "\n")
+cat("Samples flagged by Q  (> 95th percentile):", sum(outlier_df$outlier_Q),  "\n")
+```
+
+> ⚠️ Outlier detection is exploratory.  A flagged sample should be investigated
+> (was it measured incorrectly?  is it a genuinely unusual sample that expands
+> the calibration range?) — not automatically removed.
+
+---
+
+## 4.6 Summary
+
+We used `resemble::orthoProjection()` for PCA and explored:
+
+* Variance explained (scree plot).
+* Score plots coloured by the reference property.
+* Loadings to interpret which wavelengths drive each component.
+* Simple outlier detection via Hotelling's T² and Q residuals.
+
+In **Notebook 05** we build a PLS regression calibration model.

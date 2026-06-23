@@ -1,0 +1,215 @@
+---
+title: "03 — Spectral Pre-processing"
+subtitle: "CAC 2026 · Open-source chemometrics for real-world NIR handheld spectroscopy"
+author: "Leonardo Ramirez-Lopez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 9,
+  fig.height = 5
+)
+```
+
+```{r packages}
+library(prospectr)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+```
+
+```{r load-data}
+data(NIRsoil)
+spectra     <- NIRsoil$spc
+wavelengths <- as.numeric(colnames(spectra))
+```
+
+---
+
+## 3.1 Why pre-process NIR spectra?
+
+Raw NIR spectra collected in the field are affected by **physical** sources of
+variation that are unrelated to the analyte of interest:
+
+| Effect | Cause | Correction |
+|--------|-------|------------|
+| Additive baseline shifts | Variable path length, particle size | SNV, de-trending |
+| Multiplicative scaling | Reflectance differences, instrument temperature | SNV, MSC |
+| High-frequency noise | Electronic noise | Savitzky–Golay smoothing |
+| Overlapping broad bands | Instrument optics, water vapour | Derivatives |
+
+Pre-processing reduces these effects and often improves calibration model
+performance.
+
+---
+
+## 3.2 Standard Normal Variate (SNV)
+
+SNV centres each individual spectrum to zero mean and scales it to unit variance.
+It corrects **both** additive and multiplicative scatter effects.
+
+$$\text{SNV}(x_{i,j}) = \frac{x_{i,j} - \bar{x}_i}{s_i}$$
+
+where $\bar{x}_i$ and $s_i$ are the mean and standard deviation of the $i$-th
+spectrum.
+
+```{r snv}
+spectra_snv <- standardNormalVariate(spectra)
+```
+
+```{r plot-snv, echo=FALSE}
+make_long <- function(mat, wl, label) {
+  as.data.frame(mat) |>
+    tibble::rownames_to_column("sample") |>
+    tidyr::pivot_longer(-sample,
+                        names_to  = "wavelength",
+                        values_to = "value") |>
+    dplyr::mutate(wavelength = as.numeric(wavelength),
+                  transform  = label)
+}
+
+raw_long <- make_long(spectra,     wavelengths, "Raw")
+snv_long <- make_long(spectra_snv, wavelengths, "SNV")
+
+bind_rows(raw_long, snv_long) |>
+  ggplot(aes(x = wavelength, y = value, group = sample)) +
+  geom_line(alpha = 0.15, colour = "#2166AC") +
+  facet_wrap(~transform, scales = "free_y") +
+  labs(x = "Wavelength (nm)", y = "Value",
+       title = "Raw vs SNV-corrected spectra") +
+  theme_bw()
+```
+
+---
+
+## 3.3 Multiplicative Scatter Correction (MSC)
+
+MSC regresses each spectrum against a reference spectrum (usually the mean
+spectrum) and uses the regression coefficients to remove additive and
+multiplicative effects.
+
+```{r msc}
+spectra_msc <- msc(spectra)
+```
+
+```{r plot-msc, echo=FALSE}
+msc_long <- make_long(spectra_msc, wavelengths, "MSC")
+
+bind_rows(raw_long, msc_long) |>
+  ggplot(aes(x = wavelength, y = value, group = sample)) +
+  geom_line(alpha = 0.15, colour = "#1B7837") +
+  facet_wrap(~transform, scales = "free_y") +
+  labs(x = "Wavelength (nm)", y = "Value",
+       title = "Raw vs MSC-corrected spectra") +
+  theme_bw()
+```
+
+---
+
+## 3.4 Savitzky–Golay smoothing and derivatives
+
+The Savitzky–Golay (SG) filter fits a polynomial to a moving window of
+consecutive spectral points.  Setting the derivative order > 0 yields the
+first or second derivative of the spectrum, which:
+
+* Removes additive baseline offsets (1st derivative).
+* Removes both additive and multiplicative offsets (2nd derivative).
+* Sharpens spectral features and highlights peak positions.
+
+Key parameters:
+
+| Parameter | Argument | Typical values |
+|-----------|----------|----------------|
+| Window width | `w` | 5–21 (odd number) |
+| Polynomial order | `p` | 2–4 |
+| Derivative order | `m` | 0 (smooth), 1, 2 |
+
+```{r sg-1st}
+# 1st derivative: window = 11, polynomial order = 2
+spectra_sg1 <- savitzkyGolay(spectra, m = 1, p = 2, w = 11)
+```
+
+```{r sg-2nd}
+# 2nd derivative: window = 11, polynomial order = 2
+spectra_sg2 <- savitzkyGolay(spectra, m = 2, p = 2, w = 11)
+```
+
+```{r plot-sg, echo=FALSE}
+wl_sg1 <- as.numeric(colnames(spectra_sg1))
+wl_sg2 <- as.numeric(colnames(spectra_sg2))
+
+sg1_long <- make_long(spectra_sg1, wl_sg1, "SG 1st deriv.")
+sg2_long <- make_long(spectra_sg2, wl_sg2, "SG 2nd deriv.")
+
+bind_rows(raw_long, sg1_long, sg2_long) |>
+  ggplot(aes(x = wavelength, y = value, group = sample)) +
+  geom_line(alpha = 0.15, colour = "#762A83") +
+  facet_wrap(~transform, scales = "free_y", ncol = 1) +
+  labs(x = "Wavelength (nm)", y = "Value",
+       title = "Raw and Savitzky–Golay derivatives") +
+  theme_bw(base_size = 11)
+```
+
+---
+
+## 3.5 Comparing pre-processing methods
+
+The table below summarises the properties corrected by each method:
+
+| Method | Additive shift | Multiplicative | Noise | Derivative |
+|--------|:--------------:|:--------------:|:-----:|:----------:|
+| SNV | ✓ | ✓ | ✗ | ✗ |
+| MSC | ✓ | ✓ | ✗ | ✗ |
+| SG (m=0) | ✗ | ✗ | ✓ | ✗ |
+| SG 1st deriv. | ✓ | ✗ | partial | ✓ |
+| SG 2nd deriv. | ✓ | ✓ | partial | ✓ |
+
+In practice, combinations are common:
+
+```{r combined}
+# SNV followed by 1st SG derivative (a very common pipeline)
+spectra_snv_sg1 <- savitzkyGolay(standardNormalVariate(spectra),
+                                  m = 1, p = 2, w = 11)
+dim(spectra_snv_sg1)
+```
+
+---
+
+## 3.6 Choosing a pre-processing method
+
+There is no universally best method — the choice depends on:
+
+1. **The instrument**: diffuse reflectance vs. transmittance; single-beam vs.
+   dual-beam.
+2. **The sample matrix**: powders, liquids, intact fruits, soils, etc.
+3. **The analyte**: strong absorbers may not need derivatives; weak absorbers
+   often benefit.
+4. **Model performance**: compare RMSECV on a representative calibration set
+   using several pre-processing options.
+
+We will select a pre-processing method in Notebook 05 based on cross-validation
+error.
+
+---
+
+## 3.7 Summary
+
+We applied three standard pre-processing methods using `prospectr`:
+
+* `standardNormalVariate()` — SNV
+* `msc()` — MSC
+* `savitzkyGolay()` — smoothing and derivatives
+
+In **Notebook 04** we use the pre-processed spectra for exploratory analysis
+with PCA.

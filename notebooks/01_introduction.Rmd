@@ -1,0 +1,156 @@
+---
+title: "01 — Introduction to NIR Spectroscopy and the R Environment"
+subtitle: "CAC 2026 · Open-source chemometrics for real-world NIR handheld spectroscopy"
+author: "Leonardo Ramirez-Lopez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 8,
+  fig.height = 4.5
+)
+```
+
+## 1.1 What is NIR spectroscopy?
+
+Near-infrared (NIR) spectroscopy measures the interaction of light with matter in
+the wavelength range of approximately **700–2500 nm**.  When a sample is illuminated
+by NIR radiation, the molecules absorb energy at frequencies that correspond to
+overtones and combinations of fundamental molecular vibrations — mainly C–H, O–H,
+and N–H bonds.
+
+Because organic molecules absorb NIR radiation in characteristic (though overlapping)
+patterns, NIR spectra carry rich information about chemical composition.  However,
+extracting quantitative information requires **chemometric** (multivariate statistical)
+methods — the focus of this course.
+
+### Why handheld NIR?
+
+Modern portable and handheld NIR instruments enable:
+
+* **In-field** measurements — no sample preparation, no laboratory, no waiting.
+* **High throughput** — hundreds of samples per day per operator.
+* **Non-destructive** analysis — the sample is preserved after measurement.
+
+The trade-off is that handheld instruments typically have lower signal-to-noise ratios
+and are affected by ambient conditions (temperature, orientation, surface roughness).
+Robust chemometric workflows are therefore essential.
+
+---
+
+## 1.2 The R environment for chemometrics
+
+R provides a mature, open-source ecosystem for spectroscopic data analysis.  The
+packages used in this course are summarised below.
+
+```{r packages}
+library(prospectr)  # spectral pre-processing and sample selection
+library(resemble)   # memory-based learning
+library(pls)        # PLS and PCR regression
+library(ggplot2)    # graphics
+library(dplyr)      # data manipulation
+library(tidyr)      # data reshaping
+```
+
+### Key packages at a glance
+
+| Package | Main functions |
+|---------|---------------|
+| `prospectr` | `standardNormalVariate()`, `msc()`, `savitzkyGolay()`, `kenStone()` |
+| `resemble` | `orthoProjection()`, `mbl()` |
+| `pls` | `plsr()`, `pcr()`, `crossval()` |
+| `ggplot2` | `ggplot()`, `geom_line()`, `geom_point()` |
+
+---
+
+## 1.3 Checking your installation
+
+Run the following to confirm that everything is set up correctly.
+
+```{r check-install}
+pkgs <- c("prospectr", "resemble", "pls", "ggplot2", "dplyr", "tidyr", "caret")
+status <- sapply(pkgs, requireNamespace, quietly = TRUE)
+data.frame(
+  Package   = names(status),
+  Installed = status
+)
+```
+
+If any package shows `FALSE`, rerun `source("../install_packages.R")` from the
+project root.
+
+---
+
+## 1.4 The analytical workflow
+
+The diagram below outlines the steps covered in this course:
+
+```
+Raw NIR spectra
+      │
+      ▼
+Pre-processing          (Notebook 03)
+  • SNV / MSC
+  • Smoothing & derivatives
+      │
+      ▼
+Exploratory analysis    (Notebook 04)
+  • PCA scores & loadings
+  • Outlier detection
+      │
+      ▼
+Calibration             (Notebook 05)
+  • PLS regression
+  • Number of components selection
+      │
+      ▼
+Validation              (Notebook 06)
+  • Cross-validation
+  • External test set
+  • Prediction uncertainty
+```
+
+Each step will be demonstrated with real NIR soil data from the `prospectr`
+package's built-in `NIRsoil` dataset.
+
+---
+
+## 1.5 First look at the NIRsoil dataset
+
+```{r load-nirsoil}
+data(NIRsoil)
+
+# NIRsoil is a list; the spectra are in $spc
+dim(NIRsoil$spc)   # samples × wavelengths
+head(NIRsoil$spc[, 1:5])
+
+# Reference data
+head(NIRsoil[c("Nt", "Ciso", "CEC", "moisture")])
+```
+
+```{r summary-reference}
+summary(NIRsoil[c("Nt", "Ciso", "CEC", "moisture")])
+```
+
+The dataset contains **`r nrow(NIRsoil$spc)` samples** measured at
+**`r ncol(NIRsoil$spc)` wavelengths** (1100–2498 nm, 2 nm steps).  Four
+reference properties are available; we will focus on **total nitrogen (`Nt`)**
+throughout the course.
+
+---
+
+## 1.6 Session information
+
+```{r session-info}
+sessionInfo()
+```

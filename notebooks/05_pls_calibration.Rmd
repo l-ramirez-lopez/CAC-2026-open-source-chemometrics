@@ -1,0 +1,209 @@
+---
+title: "05 — PLS Calibration"
+subtitle: "CAC 2026 · Open-source chemometrics for real-world NIR handheld spectroscopy"
+author: "Leonardo Ramirez-Lopez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 8,
+  fig.height = 5
+)
+```
+
+```{r packages}
+library(prospectr)
+library(pls)
+library(ggplot2)
+library(dplyr)
+```
+
+---
+
+## 5.1 Partial Least Squares (PLS) regression
+
+PLS regression (also called PLSR or PLS1 for a single response) decomposes
+both the spectral matrix **X** and the response vector **y** into latent
+variables (LVs) that maximise the covariance between **X** and **y**.
+
+Compared with PCA + MLR, PLS has key advantages for NIR calibration:
+
+* Latent variables are supervised — they are oriented toward predicting **y**.
+* It is robust when $p \gg n$ (more wavelengths than samples).
+* It naturally handles collinear predictors.
+
+---
+
+## 5.2 Data preparation
+
+```{r data-prep}
+data(NIRsoil)
+
+spectra     <- NIRsoil$spc
+wavelengths <- as.numeric(colnames(spectra))
+
+# Pre-processing: SNV
+spectra_snv <- standardNormalVariate(spectra)
+
+# Remove samples with missing Nt
+keep <- !is.na(NIRsoil$Nt)
+X    <- spectra_snv[keep, ]
+y    <- NIRsoil$Nt[keep]
+
+cat("Samples for modelling:", nrow(X), "\n")
+cat("Nt range:", round(range(y), 3), "%\n")
+```
+
+### Train / test split using Kennard–Stone
+
+We use the `kenStone()` function from `prospectr` to select a representative
+calibration set via the Kennard–Stone algorithm, ensuring the calibration
+samples span the spectral space.
+
+```{r train-test-split}
+set.seed(42)
+ks <- kenStone(X, k = round(nrow(X) * 0.7), metric = "mahal", pc = 10)
+
+X_cal  <- X[ks$model, ]
+y_cal  <- y[ks$model]
+X_test <- X[ks$test,  ]
+y_test <- y[ks$test]
+
+cat("Calibration samples:", nrow(X_cal), "\n")
+cat("Test samples:       ", nrow(X_test), "\n")
+```
+
+---
+
+## 5.3 Fitting a PLS model
+
+```{r pls-fit}
+# pls::plsr expects the response as a matrix
+pls_model <- plsr(
+  y_cal ~ X_cal,
+  ncomp      = 20,
+  validation = "CV",       # leave-one-out cross-validation
+  segments   = 10,         # 10-fold CV (faster than LOO for large datasets)
+  method     = "oscorespls"
+)
+```
+
+---
+
+## 5.4 Selecting the optimal number of components
+
+```{r rmsecv-plot}
+rmsecv <- RMSEP(pls_model, estimate = "CV")$val[1, 1, ]
+ncomp_seq <- 0:(length(rmsecv) - 1)
+
+rmsecv_df <- data.frame(ncomp = ncomp_seq, RMSECV = rmsecv)
+
+opt_ncomp <- ncomp_seq[which.min(rmsecv)]
+cat("Optimal number of components (minimum RMSECV):", opt_ncomp, "\n")
+
+ggplot(rmsecv_df, aes(x = ncomp, y = RMSECV)) +
+  geom_line(colour = "#2166AC") +
+  geom_point(colour = "#2166AC", size = 2) +
+  geom_vline(xintercept = opt_ncomp, linetype = "dashed", colour = "tomato") +
+  annotate("text", x = opt_ncomp + 0.3,
+           y    = max(rmsecv_df$RMSECV) * 0.97,
+           label = paste("Optimal:", opt_ncomp, "LVs"),
+           colour = "tomato", hjust = 0, size = 3.5) +
+  labs(
+    title = "PLS cross-validation — RMSECV vs number of components",
+    x     = "Number of latent variables",
+    y     = "RMSECV (%)"
+  ) +
+  theme_bw()
+```
+
+> **Parsimony principle**: prefer the simplest model (fewest LVs) whose RMSECV
+> is within one standard error of the minimum.  This reduces the risk of
+> over-fitting.
+
+---
+
+## 5.5 Calibration performance
+
+```{r cal-performance}
+# Calibration predictions
+y_hat_cal <- predict(pls_model, ncomp = opt_ncomp)[, , 1]
+
+cal_df <- data.frame(
+  measured  = y_cal,
+  predicted = y_hat_cal
+)
+
+# Calibration statistics
+rmse_cal <- sqrt(mean((cal_df$measured - cal_df$predicted)^2))
+r2_cal   <- cor(cal_df$measured, cal_df$predicted)^2
+
+cat(sprintf("Calibration — RMSEC: %.4f | R²: %.4f\n", rmse_cal, r2_cal))
+```
+
+```{r plot-cal}
+ggplot(cal_df, aes(x = measured, y = predicted)) +
+  geom_point(alpha = 0.6, colour = "#2166AC") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    title    = paste0("Calibration — ", opt_ncomp, " LVs"),
+    subtitle = sprintf("RMSEC = %.4f | R² = %.4f", rmse_cal, r2_cal),
+    x = "Measured Nt (%)",
+    y = "Predicted Nt (%)"
+  ) +
+  coord_equal() +
+  theme_bw()
+```
+
+---
+
+## 5.6 PLS regression coefficients
+
+PLS regression coefficients (in the original wavelength space) reveal which
+spectral regions are important for predicting Nt.
+
+```{r reg-coeff}
+coef_pls <- as.numeric(coef(pls_model, ncomp = opt_ncomp, intercept = FALSE))
+
+coef_df <- data.frame(
+  wavelength = wavelengths,
+  coefficient = coef_pls
+)
+
+ggplot(coef_df, aes(x = wavelength, y = coefficient)) +
+  geom_line(colour = "#762A83") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = paste0("PLS regression coefficients — ", opt_ncomp, " LVs"),
+    x     = "Wavelength (nm)",
+    y     = "Regression coefficient"
+  ) +
+  theme_bw()
+```
+
+Large positive or negative coefficients indicate wavelengths most influential
+for predicting total nitrogen.
+
+---
+
+## 5.7 Summary
+
+We:
+
+* Split the dataset into calibration and test sets using Kennard–Stone.
+* Fitted a PLS regression model with cross-validation.
+* Selected the optimal number of latent variables by minimising RMSECV.
+* Visualised calibration fit and regression coefficients.
+
+In **Notebook 06** we evaluate the model on the independent test set and
+compute full validation statistics.
