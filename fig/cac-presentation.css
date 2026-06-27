@@ -1,0 +1,17 @@
+#title-slide h1 {
+  font-size: 1em !important;
+}
+
+.retro {
+  font-family: 'Courier New', Courier, monospace;
+  color: #00AA00;
+  text-shadow: 0 0 10px #00AA00;
+}
+
+.small-text {
+  font-size: 80%;
+}
+
+.small-text2 {
+  font-size: 70%;
+}

@@ -1,0 +1,1034 @@
+---
+title: "<span style='font-size: 1.4em;'>Open-source chemometrics for real-world NIR handheld spectroscopy</span>"
+author:
+  - name: "<span style='color:white'>Leonardo</span> <span style='color:#F0AD00; font-weight:bold;'>Ramirez-Lopez</span>"
+  - name: "<span style='color:white'>Marçal</span> <span style='color:#F0AD00; font-weight:bold;'>Plans</span>"
+date: today
+bibliography: reference-list.bib
+csl: elsevier-harvard.csl
+link-citations: true
+format: 
+  revealjs:
+    embed-resources: true
+    code-block-font-size: "0.05em"
+    slideNumber: false
+    css: fig/cac-presentation.css
+    theme: white
+    transition: slide
+    controls: true
+    progress: true
+    history: true
+    hash: true
+    title-slide-attributes:
+      data-background-image: fig/polar_spectra_bg.png
+      data-background-size: cover
+      data-background-position: center
+      data-background-color: "#000000"
+execute:
+  enabled: true
+---
+
+
+
+
+```{r}
+#| label: setup
+#| include: false
+
+required_packages <- c(
+  "remotes", "ggplot2",
+  "prospectr", "matrixStats", "kableExtra"
+)
+
+missing <- required_packages[!sapply(required_packages, requireNamespace, quietly = TRUE)]
+if (length(missing) > 0) install.packages(missing)
+
+
+library(proximetricsR)
+library(remotes)
+library(ggplot2)
+library(prospectr)
+library(matrixStats)
+
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  message = FALSE,
+  warning = FALSE, 
+  fig.align = 'center'
+)
+options(cli.num_colors = 1)
+Sys.setenv("RSTUDIO" = "")
+Sys.setenv("POSITRON" = "")
+old_options <- options(digits = 3)
+```
+
+# Session 1 {background-color="#000000"}
+
+
+## Introduction
+
+$$
+\text{y} = {\color{red} f}(\text{DRS spectrum}) + \epsilon
+$$
+
+::: {.incremental}
+
+
+:::
+
+## Introduction
+. . .
+
+> DRS **complements**, does not replace, laboratory analyses [@viscarra2022diffuse]
+
+. . .
+
+::: {.callout-warning}
+Developing reliable DRS models is itself **costly and time-consuming**, a limitation rarely acknowledged in the literature [@RamirezLopez2026Liblex]
+
+:::
+
+
+
+## What are we trying to do? {background-color="#000000"}
+
+$$\text{y} = {\color{red} f}({\color{dodgerblue} g}(\text{DRS spectrum})) + \epsilon$$ 
+
+
+::: {.fragment}
+- ${\color{dodgerblue} g}$: signal processing, e.g derivatives, scatter correction, normalisation  
+
+- ${\color{red} f}$: chemometric model, e.g. regression, classification, local methods
+
+- $\epsilon$: irreducible error
+:::
+
+::: {.fragment}
+These are distinct, composable steps.
+:::
+
+
+## What are we trying to do?
+
+A simplified view of the chemometric modelling pipeline:
+
+```{r}
+#| echo: false
+#| eval: true
+#| fig-align: center
+library(DiagrammeR)
+
+grViz("
+digraph pipeline {
+  graph [rankdir=LR, bgcolor=transparent]
+  node [shape=box, style=filled, fillcolor='#F5F5F5', fontname=Helvetica, fontsize=14]
+  
+  A [label='Raw training\\ndata']
+  B [label='Data\\nwrangling']
+  C [label=<<I>g</I><BR/>(preprocessing<BR/>combinations)>, fillcolor='#CCEEFF']
+  D [label=<<I>f</I><BR/>(modelling<BR/>approaches)>, fillcolor='#FFD9D9']
+  E [label='Validate', fillcolor='#DDFFDD']
+  
+  { rank=same; D; E }
+  
+  A -> B -> C -> D
+  D -> E [style=dashed, color='#999999']
+  E -> C [constraint=false, style=dashed, color='#999999',
+          label='  iterate', fontname=Helvetica, fontsize=11, fontcolor='#999999']
+}
+")
+```
+
+
+## What are we trying to do?
+
+
+A simplified view of the prediction pipeline:
+
+
+```{r}
+#| echo: false
+#| eval: true
+#| fig-align: center
+library(DiagrammeR)
+grViz("
+digraph pipeline {
+  graph [rankdir=LR, bgcolor=transparent]
+  node [shape=box, style=filled, fillcolor='#F5F5F5', fontname=Helvetica, fontsize=14]
+  A [label='Raw\\nspectrum']
+  B [label=<<I>g</I><BR/>(signal processing)>, fillcolor='#CCEEFF']
+  C [label='Preprocessed\\nspectrum']
+  D [label=<<I>f</I><BR/>(model)>, fillcolor='#FFD9D9']
+  E [label='ŷ']
+  A -> B -> C -> D -> E
+}
+")
+```
+
+## Why open-source chemometrics? [1/4] {background-color="#000000"}
+
+Proprietary chemometrics software...
+
+
+<br>
+
+**Cost and access**
+
+::: {.incremental}
+- Licence fees
+
+- Institutional dependency
+
+- Risk of discontinuation
+
+- Limited user base → limited community support
+
+:::
+
+## Why open-source chemometrics? [2/4] {background-color="#000000"}
+
+Proprietary chemometrics software...
+
+<br> 
+
+**Transparency and trust** 
+
+
+::: {.incremental}
+
+- Closed source
+
+- Bugs hard to spot or report
+
+- Reproducibility limited
+
+- No audit trail
+
+- Less amenable to peer scrutiny
+:::
+
+## Why open-source chemometrics? [3/4] {background-color="#000000"}
+
+Proprietary chemometrics software...
+
+<br> 
+
+**Flexibility and integration**
+
+::: {.incremental}   
+
+- Poor interoperability
+
+- No version control
+
+- Cannot script end-to-end pipelines
+
+- Disconnected from modern AI/ML tools
+
+- Model deployment requires additional licences
+
+- Slow response time to new developments
+:::
+
+
+## Why open-source chemometrics? [4/4] {background-color="#000000"}
+
+<br>
+
+```{r}
+#| echo: false
+#| eval: true
+library(knitr)
+
+comparison_tbl <- data.frame(
+  Aspect = c("Cost", "Source", "Reproducibility", "AI/ML integration", "Customisation", "Community", "Longevity"),
+  Proprietary = c(
+    "Licence required",
+    "Closed",
+    "Limited",
+    "Restricted",
+    "Little",
+    "Small",
+    "Uncertain"
+  ),
+  "Open source (e.g. R)" = c(
+    "Free",
+    "Open",
+    "Full scripting",
+    "Native",
+    "Unlimited",
+    "Large, active",
+    "Community-sustained"
+  ),
+  check.names = FALSE
+)
+
+kable(comparison_tbl, format = "html") |>
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    position = "center",
+    font_size = 25
+  ) |>
+  kableExtra::column_spec(1, bold = TRUE, width = "20%") |>
+  kableExtra::column_spec(2, background = "#FFE6E6", color = "black",  width = "40%") |>
+  kableExtra::column_spec(3, background = "#E6F3FF", color = "black", width = "40%")
+```
+
+## Chemometrics in R {background-color="#000000"}
+
+[https://cran.r-project.org/web/views/ChemPhys.html](https://cran.r-project.org/web/views/ChemPhys.html)
+
+
+## Chemometrics in R: `prospectr` {background-color="#000000"}
+
+Released in 2013...
+
+<img src="fig/packages-1.png" width="70%" alt="R packages for chemometrics 1">
+
+[https://CRAN.R-project.org/package=prospectr](https://CRAN.R-project.org/package=prospectr)
+
+## Chemometrics in R: `resemble` {background-color="#000000"}
+
+Released in 2014...
+
+<img src="fig/packages-2.png" width="70%" alt="R packages for chemometrics 2">
+
+[https://CRAN.R-project.org/package=resemble](https://CRAN.R-project.org/package=resemble)
+
+
+# <span style="font-family: 'Courier New', Courier, monospace; color: #00AA00; text-shadow: 0 0 10px #00AA00;">> hello_world()!</span> {background-color="#000000"}
+
+
+## Chemometrics in R: `proximetricsR` {background-color="#000000"}
+
+
+[First implemented: 2020] [Released today🙂] [Soon on CRAN]
+
+<img src="fig/packages-3.png" width="70%" alt="R packages for chemometrics 3">
+
+[https://github.com/l-ramirez-lopez/proximetricsR](https://github.com/l-ramirez-lopez/proximetricsR) 
+
+
+## Chemometrics with Python 
+
+[https://scikit-learn.org/](https://scikit-learn.org/)
+
+Comprehensive machine learning framework:
+
+::: {.small-text}
+
+::: {.incremental}
+- `chemtools`: chemometric methods and preprocessing
+- `scikit-learn`: PCA, PLS, regression, classification
+- `numpy`, `scipy`: numerical and signal processing
+- `scikit-image`: image and signal preprocessing
+- `spectral`: hyperspectral data analysis
+- `tensorflow`, `pytorch`: deep learning for spectroscopy
+:::
+
+::: {.fragment}
+**Strength**: seamless integration with modern ML/AI ecosystem and data science workflows
+:::
+
+:::
+
+
+## Chemometrics with Julia
+
+[https://julialang.org/](https://julialang.org/)
+
+High-performance numerical computing for chemometrics:
+
+::: {.small-text}
+
+::: {.incremental}
+- `MultivariateStats.jl`: PCA, PLS, ICA
+- `MLJ.jl`: machine learning meta-framework
+- `DSP.jl`: signal processing
+- `Jchemo.jl`: a toolbox for chemometrics
+- `SpectroscopiCal.jl`: __chemometics in Julia___ (coming soon)
+- `SpectralArrays.jl`: __matrices for spectral data information__  (coming very soon)
+:::
+
+::: {.fragment}
+**Note**: chemometrics ecosystem smaller than R/Python, but growing rapidly
+:::
+
+:::
+
+# Session 2: Let's get our hands dirty {background-color="#000000"}
+
+## What are we trying to do? 
+
+
+$$\text{y} = {\color{red} f}({\color{dodgerblue} g}(\text{DRS spectrum})) + \epsilon$$ 
+
+
+```{r}
+#| echo: false
+#| eval: true
+#| fig-align: center
+library(DiagrammeR)
+
+grViz("
+digraph pipeline {
+  graph [rankdir=LR, bgcolor=transparent]
+  node [shape=box, style=filled, fillcolor='#F5F5F5', fontname=Helvetica, fontsize=14]
+  
+  A [label='Raw training\\ndata']
+  B [label='Data\\nwrangling']
+  C [label=<<I>g</I><BR/>(preprocessing<BR/>combinations)>, fillcolor='#CCEEFF']
+  D [label=<<I>f</I><BR/>(modelling<BR/>approaches)>, fillcolor='#FFD9D9']
+  E [label='Validate', fillcolor='#DDFFDD']
+  
+  { rank=same; D; E }
+  
+  A -> B -> C -> D
+  D -> E [style=dashed, color='#999999']
+  E -> C [constraint=false, style=dashed, color='#999999',
+          label='  iterate', fontname=Helvetica, fontsize=11, fontcolor='#999999']
+}
+")
+```
+
+## The data [1/1] {background-color="#000000"}
+
+A dataset of soil samples from Spain
+
+- Target properties: organic carbon (OC) and organic matter
+
+- Spectral data/predictors: NIR (1350 - 2550 nm or 7407.4 - 3921.5 cm$^{-1}$) collected with a __ProxiScout__ (BUCHI) sensor
+
+- 364 samples for calibration of models
+
+- 150 samples for validation of models
+
+
+## The data [1/2] {background-color="#000000"}
+
+In the folder `/data/local-samples-spain/` you will find:
+
+- `local-spectra-cal.xlsx`: raw spectra for the calibration set
+
+- `local-properties-cal.xlsx`: reference properties for the calibration set
+
+- `local-spectra-val.xlsx`: raw spectra for the validation set
+
+- `local-properties-val.xlsx`: reference properties for the validation set
+
+
+## Before we start: organise your workspace {background-color="#000000"}
+
+Create a folder manually on your computer and organise it like this:
+
+```
+my_folder/
+├── data/
+│   └── local-samples-spain/
+│       ├── local-spectra-cal.xlsx
+│       ├── local-properties-cal.xlsx
+│       ├── local-spectra-val.xlsx
+│       └── local-properties-val.xlsx
+├── R/
+└── outputs/
+```
+
+## Set the working directory in R 
+
+<br>
+<br>
+
+Tell R to use your folder as the working directory:
+
+```{r}
+#| eval: false
+my_folder <- "C:/path/to/my_folder"
+setwd(my_folder)
+```
+
+Verify (you should get the path to your folder):
+
+```{r}
+#| eval: false
+getwd()
+```
+
+
+## For R we use RStudio {background-color="#000000"}
+
+
+<img src="fig/r-studio.png" alt="RStudio">
+
+
+## Install and load the `proximetricsR` package in R
+
+<br>
+
+
+Install `proximetricsR` from GitHub:  
+```{r} 
+#| eval: false
+remotes::install_github("l-ramirez-lopez/proximetricsR")
+```
+
+
+
+## Install and load the `proximetricsR` package in R
+
+
+<br>
+
+
+Install `proximetricsR` from GitHub:  
+```{r} 
+#| eval: false
+remotes::install_github("l-ramirez-lopez/proximetricsR")
+```
+
+Once installed, load it:  
+
+```{r} 
+#| eval: false
+library(proximetricsR)
+```
+
+
+## Load the calibration data
+<br>
+<br>
+
+Read the calibration data (samples with spectra and their corresponding 
+reference values):
+
+
+```{r}
+mlocal_cal <- proxiscout_read_data(
+  file = "data/local-samples-spain/local-spectra-cal.xlsx", 
+  references_file = "data/local-samples-spain/local-properties-cal.xlsx"
+)
+```
+
+## Inspect the loaded caliration data
+
+Check how many rows and variables are in the loaded data:
+
+```{r}
+dim(mlocal_cal)
+```
+
+Check the name of the variables in the loaded data:
+
+```{r}
+colnames(mlocal_cal)
+```
+
+View the table:
+
+```{r}
+#| eval: false
+View(mlocal_cal)
+```
+
+View the spectra only:
+```{r}
+#| eval: false
+View(mlocal_cal$spc)
+```
+
+## Structure of the loaded data (summary):
+
+
+::: {.small-text2}
+
+The `proxiscout_read_data()` function returns a special object that combines:
+
+**Overall structure:**  
+
+- 364 samples (rows)  and 6 variables (columns)  
+
+- Class: `proxiscout_data` (a `data.frame`)
+
+**The 6 variables include:**   
+
+- Sample identifier, device identifier, a ref column, OC, OM
+
+- One spectra matrix with 257 wavenumbers: `mlocal_cal$spc` 
+
+So when you access `mlocal_cal$spc`, you get the 364 × 257 matrix of raw NIR ___reflectance___ values. The other columns contain reference property values (e.g. OC, organic matter) and sample identifiers.
+
+:::
+
+
+## Now load the validation data
+
+Read the validation data (samples with spectra and their corresponding 
+reference values):
+```{r}
+mlocal_val <- proxiscout_read_data(
+  file = "data/local-samples-spain/local-spectra-val.xlsx", 
+  references_file = "data/local-samples-spain/local-properties-val.xlsx"
+)
+```
+
+Check the dimensions of the validation data:
+
+```{r}
+dim(mlocal_val)
+```
+
+```{r}
+colnames(mlocal_val)
+```
+
+
+## Obtain the vector of wavenumbers
+
+<br>  
+
+The wavenumbers are stored as the column names of the spectra matrix in the calibration data. We can extract them and convert them to numeric values:
+
+```{r}
+#| results: hide
+wavs <- as.numeric(colnames(mlocal_cal$spc))
+wavs
+```
+
+
+## The spectra
+
+```{r}
+#| eval: false
+matplot(
+  wavs,
+  t(mlocal_cal$spc), 
+  type = "l", 
+  lty = 1,
+  col = rgb(1, 0, 0, 0.5),
+  xlab = expression("Wavenumber ("*cm^{-1}*")"),
+  ylab = "Reflectance",
+  main = "Calibration data",
+  xlim = c(7500, 4000)
+)
+
+matplot(
+  wavs,
+  t(mlocal_val$spc), 
+  type = "l", 
+  lty = 1,
+  col = rgb(1, 0, 0, 0.5),
+  xlab = expression("Wavenumber ("*cm^{-1}*")"),
+  ylab = "Reflectance",
+  main = "Validation data",
+  xlim = c(7500, 4000)
+)
+
+```
+
+## The spectra
+
+<br>
+
+```{r}
+#| eval: true
+#| echo: false
+library(ggplot2)
+library(plotly)
+library(tidyr)
+
+# Extract wavelengths
+wavs <- as.numeric(colnames(mlocal_cal$spc))
+
+# Prepare calibration data
+df_cal <- data.frame(
+  sample = rep(1:nrow(mlocal_cal$spc), each = ncol(mlocal_cal$spc)),
+  wavenumber = rep(wavs, times = nrow(mlocal_cal$spc)),
+  reflectance = as.vector(t(mlocal_cal$spc)),
+  dataset = "Calibration"
+)
+
+# Prepare validation data
+df_val <- data.frame(
+  sample = rep(1:nrow(mlocal_val$spc), each = ncol(mlocal_val$spc)),
+  wavenumber = rep(wavs, times = nrow(mlocal_val$spc)),
+  reflectance = as.vector(t(mlocal_val$spc)),
+  dataset = "Validation"
+)
+
+# Combine
+df_spectra <- rbind(df_cal, df_val)
+
+# Create ggplot with facets
+p <- ggplot(df_spectra, aes(x = wavenumber, y = reflectance, group = sample)) +
+  geom_line(aes(colour = dataset), linewidth = 0.3, alpha = 0.6) +
+  scale_x_reverse(limits = c(7500, 4000)) +
+  scale_colour_manual(
+    values = c("Calibration" = "#377EB8", "Validation" = "#E41A1C")
+  ) +
+  facet_wrap(~dataset, nrow = 1) +
+  labs(
+    x = "Wavenumber (cm⁻¹)",
+    y = "Reflectance"
+  ) +  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+
+# Make interactive
+ggplotly(p, tooltip = c("x", "y", "colour")) |> 
+  layout(
+    hovermode = "x unified",
+    width = 990,
+    height = 450
+  )
+```
+
+
+## What are we trying to do? 
+
+
+$$\text{y} = {\color{red} f}({\color{dodgerblue} g}(\text{DRS spectrum})) + \epsilon$$ 
+
+
+```{r}
+#| echo: false
+#| eval: true
+#| fig-align: center
+library(DiagrammeR)
+
+grViz("
+digraph pipeline {
+  graph [rankdir=LR, bgcolor=transparent]
+  node [shape=box, style=filled, fillcolor='#F5F5F5', fontname=Helvetica, fontsize=14]
+  
+  A [label='Raw training\\ndata']
+  B [label='Data\\nwrangling']
+  C [label=<<I>g</I><BR/>(preprocessing<BR/>combinations)>, fillcolor='#CCEEFF']
+  D [label=<<I>f</I><BR/>(modelling<BR/>approaches)>, fillcolor='#FFD9D9']
+  E [label='Validate', fillcolor='#DDFFDD']
+  
+  { rank=same; D; E }
+  
+  A -> B -> C -> D
+  D -> E [style=dashed, color='#999999']
+  E -> C [constraint=false, style=dashed, color='#999999',
+          label='  iterate', fontname=Helvetica, fontsize=11, fontcolor='#999999']
+}
+")
+```
+
+## What are we trying to do?  {background-color="#000000"}
+
+<br>
+
+::: {.incremental}
+
+a) Define what to model (e.g. OC, OM, etc.)
+
+b) Define a set of preprocessing methods ${\color{dodgerblue} g}$ to apply to the spectra
+
+c) Define a set of modelling methods ${\color{red} f}$ to apply to the preprocessed spectra
+
+d) Define additional aspects of the calibtration pipeline (e.g. cross-validation, hyperparameter tuning, etc.)
+
+::: 
+
+
+## a) Define what to model 
+
+<br>
+
+<br>
+
+Here you can define in a list a set of formulas to model, e.g. OC, OM, etc. For example, if you want to model OC, you can define the following formula:
+
+```{r}
+my_formulas <- list(OC ~ spc)
+```
+
+Note you can also include more than one formula in the list, e.g. if you want to model both OC and OM:
+
+```{r}
+my_formulas_all <- list(OC ~ spc, OM ~ spc)
+```
+
+## b) Define a set of preprocessing methods [1/4]
+
+In `proximetricsR`, you can define a set of preprocessing methods/recipes. 
+
+We use the concept of "___constructors___" to define preprocessing methods. A constructor is a function that takes some parameters and returns a preprocessing method. The preprocessing constructors have a `prep_*` prefix. For example:
+
+```{r}
+prep_snv()
+```
+
+
+## b) Define a set of preprocessing methods [2/4]
+
+Other examples of construtors:
+
+```{r}
+#| eval: false
+prep_resample(grid = "proxiscout")
+prep_smooth(w = 5, p = 1, algorithm = "savitzky-golay")
+prep_derivative(m = 1, w = 11, algorithm = "savitzky-golay")
+prep_transform(to = "absorbance")
+```
+
+Check more: 
+
+```{r}
+#| eval: false
+help(proximetricsR)
+```
+
+
+## b) Define a set of preprocessing methods [3/4]
+
+Let's create a recipe of preprocessing methods to apply to the spectra:
+
+```{r}
+recipe_1 <- preprocess_recipe(
+  prep_resample(grid = "proxiscout"),
+  prep_snv(),
+  prep_derivative(m = 1, w = 11, p = 1, algorithm = "savitzky-golay"),
+  device = "proxiscout" # !!!
+)
+recipe_1
+```
+
+## b) Define a set of preprocessing methods [4/4]
+
+Let's create a list of various preprocessing recipes (to test later):
+
+```{r}
+recipe_2 <- preprocess_recipe(
+  prep_resample(grid = "proxiscout"),
+  prep_snv(),
+  prep_derivative(m = 2, w = 11, p = 2, algorithm = "savitzky-golay"),
+  device = "proxiscout" 
+)
+
+recipe_3 <- preprocess_recipe(
+  prep_resample(grid = "proxiscout"),
+  prep_detrend(p = 2),
+  prep_derivative(m = 2, w = 11, p = 2, algorithm = "savitzky-golay"),
+  device = "proxiscout" 
+)
+
+recipe_4 <- preprocess_recipe(
+  prep_resample(grid = "proxiscout"),
+  prep_transform(to = "absorbance"),
+  prep_derivative(m = 2, w = 11, p = 2, algorithm = "savitzky-golay"),
+  device = "proxiscout" 
+)
+
+recipe_5 <- preprocess_recipe(
+  prep_resample(grid = "proxiscout"),
+  prep_transform(to = "absorbance"),
+  prep_derivative(m = 1, w = 11, p = 2, algorithm = "savitzky-golay"),
+  prep_snv(),
+  device = "proxiscout" 
+)
+
+my_preprocessings <- list(recipe_1, recipe_2, recipe_3, recipe_4, recipe_5)
+```
+
+## c) Define a set of modelling methods
+
+Here we also use the concept of constructors:
+
+```{r}
+#| eval: false
+help(fit_constructors)
+```
+
+Create a list of modeling methods (to test later):
+
+```{r}
+fit_1 <- fit_plsr(ncomp = 10, type = "standard")
+fit_2 <- fit_plsr(ncomp = 9, type = "modified") 
+
+my_fittings <- list(fit_1, fit_2)
+```
+
+__NOTE__: check the vignette made for regression methods
+
+## d) Define additional aspects of the calibtration pipeline 
+
+```{r}
+#| eval: false
+help(calibration_control)
+```
+
+```{r}
+my_control <- calibration_control(
+  validation_type = "kfold", # kfold cross validation 
+  number = 5, # 5 folds
+  folds = "random", # folds made at random
+  remove_outliers = 1 # fit, remove outliers and fit again (one refit iteration)
+)
+```
+
+## Calibrate!!!
+
+Now, the calibration of a model becomes a simple integration of instructions:
+
+```{r}
+#| echo: false
+my_model <- calibrate_models(
+  formulas = my_formulas,
+  data = mlocal_cal,
+  preprocess_recipes = my_preprocessings,
+  methods = my_fittings,
+  control = my_control,
+  verbose = FALSE
+)
+```
+```{r}
+#| eval: false
+my_model <- calibrate_models(
+  formulas = my_formulas,
+  data = mlocal_cal,
+  preprocess_recipes = my_preprocessings,
+  methods = my_fittings,
+  control = my_control
+)
+```
+
+Plot detailed modelling results:
+
+```{r}
+#| eval: false
+help(plot.spectral_model)
+```
+
+Inspect the results in plots:
+
+```{r}
+#| eval: false
+plot(
+  my_model$final_models$`OC ~ spc`,  
+  spectral = "all", 
+  cv = "all", 
+  validation = "all"
+)
+```
+
+
+## Validate (externally) [1/3]
+
+
+```{r}
+#| eval: false
+one_model <- my_model$final_models$`OC ~ spc`
+y_hat <- predict(one_model, newdata = mlocal_val)
+
+plot(
+  y_hat$predictions, 
+  mlocal_val$OC, 
+  xlab = "Predicted OC", 
+  ylab = "Reference OC", 
+  main = "External validation"
+)
+abline(0, 1, col = "red")
+```
+
+
+
+## Validate (externally) [2/3]
+
+```{r}
+#| eval: true
+#| echo: false
+#| fig-width: 6
+#| fig-height: 6
+#| out-width: "60%"
+
+library(plotly)
+
+one_model <- my_model$final_models$`OC ~ spc`
+y_hat     <- predict(one_model, newdata = mlocal_val, verbose = FALSE)
+
+predicted  <- y_hat$predictions[, 1]
+referenced <- mlocal_val$OC
+
+xy_lims <- range(c(predicted, referenced), na.rm = TRUE)
+
+rmse <- sqrt(mean((predicted - referenced)^2, na.rm = TRUE))
+r2   <- cor(predicted, referenced, use = "complete.obs")^2
+
+plot_ly() |>
+  add_segments(
+    x = xy_lims[1], xend = xy_lims[2],
+    y = xy_lims[1], yend = xy_lims[2],
+    line = list(color = "rgba(128,128,128,0.9)", width = 1.5, dash = "dash"),
+    hoverinfo = "skip",
+    showlegend = FALSE
+  ) |>
+  add_markers(
+    x = ~predicted,
+    y = ~referenced,
+    marker = list(
+      color = "rgba(55, 126, 184, 0.75)",
+      size  = 8,
+      line  = list(color = "rgba(55, 126, 184, 1)", width = 0.5)
+    ),
+    text = ~paste0(
+      "Predicted OC: ", round(predicted, 2), "<br>",
+      "Reference OC: ", round(referenced, 2)
+    ),
+    hoverinfo = "text",
+    showlegend = FALSE
+  ) |> 
+  layout(
+    title = list(text = "External validation", font = list(size = 14)),
+    xaxis = list(
+      title     = "Predicted OC",
+      range     = xy_lims,
+      gridcolor = "rgba(204,204,204,0.6)",
+      zeroline  = FALSE
+    ),
+    yaxis = list(
+      title       = "Reference OC",
+      range       = xy_lims,
+      gridcolor   = "rgba(204,204,204,0.6)",
+      zeroline    = FALSE,
+      scaleanchor = "x",
+      scaleratio  = 1
+    ),
+    plot_bgcolor  = "white",
+    paper_bgcolor = "white",
+    annotations = list(list(
+      x         = xy_lims[1] + 0.05 * diff(xy_lims),
+      y         = xy_lims[2] - 0.05 * diff(xy_lims),
+      text      = paste0("R² = ", round(r2, 3), "<br>RMSE = ", round(rmse, 3)),
+      showarrow = FALSE,
+      align     = "left",
+      font      = list(size = 12),
+      xanchor   = "left",
+      yanchor   = "top"
+    ))
+  )
+```
+
+
+
+## Validate (externally) [3/3]
+
+<br> 
+
+```{r}
+cat("R2 =", round(cor(y_hat$predictions, mlocal_val$OC)^2, 3), "\n")
+cat("RMSE =", round(mean((y_hat$predictions - mlocal_val$OC)^2)^0.5, 3), "\n")
+```
+
+## References {.scrollable}
+
+::: {#refs}
+:::
+
