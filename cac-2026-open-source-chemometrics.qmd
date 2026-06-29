@@ -3,7 +3,7 @@ title: "<span style='font-size: 1.4em;'>Open-source chemometrics for real-world 
 author:
   - name: "<span style='color:white'>Leonardo</span> <span style='color:#F0AD00; font-weight:bold;'>Ramirez-Lopez</span>"
   - name: "<span style='color:white'>Marçal</span> <span style='color:#F0AD00; font-weight:bold;'>Plans</span>"
-date: today
+date: "2026-06-29"
 bibliography: reference-list.bib
 csl: elsevier-harvard.csl
 link-citations: true
@@ -36,7 +36,7 @@ execute:
 #| include: false
 
 required_packages <- c(
-  "remotes", "ggplot2",
+  "remotes", "ggplot2", "resemble",
   "prospectr", "matrixStats", "kableExtra"
 )
 
@@ -63,6 +63,14 @@ Sys.setenv("RSTUDIO" = "")
 Sys.setenv("POSITRON" = "")
 old_options <- options(digits = 3)
 ```
+
+
+
+<br>
+<br>
+<img src="fig/instructors.jpeg" width="100%" alt="instructors">
+
+
 
 # Session 1 {background-color="#000000"}
 
@@ -835,6 +843,14 @@ recipe_5 <- preprocess_recipe(
   device = "proxiscout" 
 )
 
+recipe_6 <- preprocess_recipe(
+  prep_resample(grid = "proxiscout"),
+  prep_transform(to = "absorbance"),
+  prep_derivative(m = 2, w = 11, p = 2, algorithm = "savitzky-golay"),
+  prep_snv(),
+  device = "proxiscout" 
+)
+
 my_preprocessings <- list(recipe_1, recipe_2, recipe_3, recipe_4, recipe_5)
 ```
 
@@ -889,6 +905,7 @@ my_model <- calibrate_models(
   verbose = FALSE
 )
 ```
+
 ```{r}
 #| eval: false
 my_model <- calibrate_models(
@@ -928,107 +945,806 @@ plot(
 one_model <- my_model$final_models$`OC ~ spc`
 y_hat <- predict(one_model, newdata = mlocal_val)
 
+axes_range <- range(c(y_hat$predictions, mlocal_val$OC), na.rm = TRUE)
+
 plot(
   y_hat$predictions, 
   mlocal_val$OC, 
-  xlab = "Predicted OC", 
-  ylab = "Reference OC", 
-  main = "External validation"
+  xlab = "Predicted OC (%)", 
+  ylab = "Reference OC (%)", 
+  main = "External validation",
+  xlim = axes_range,
+  ylim = axes_range, 
+  pch = 16, 
+  cex = 2, 
+  col = "#F0AD00"
 )
 abline(0, 1, col = "red")
 ```
 
-
-
 ## Validate (externally) [2/3]
+
+<div style="display: flex; justify-content: center;">
 
 ```{r}
 #| eval: true
 #| echo: false
-#| fig-width: 6
+#| fig-width: 5.5
 #| fig-height: 6
+#| fig-align: center
 #| out-width: "60%"
 
+library(ggplot2)
 library(plotly)
 
 one_model <- my_model$final_models$`OC ~ spc`
-y_hat     <- predict(one_model, newdata = mlocal_val, verbose = FALSE)
+y_hat <- predict(one_model, newdata = mlocal_val, verbose = FALSE)
 
-predicted  <- y_hat$predictions[, 1]
-referenced <- mlocal_val$OC
+df_val <- data.frame(
+  predicted = y_hat$predictions[, 1],
+  referenced = mlocal_val$OC
+)
 
-xy_lims <- range(c(predicted, referenced), na.rm = TRUE)
+xy_lims <- range(c(df_val$predicted, df_val$referenced), na.rm = TRUE)
+rmse <- sqrt(mean((df_val$predicted - df_val$referenced)^2, na.rm = TRUE))
+r2 <- cor(df_val$predicted, df_val$referenced, use = "complete.obs")^2
 
-rmse <- sqrt(mean((predicted - referenced)^2, na.rm = TRUE))
-r2   <- cor(predicted, referenced, use = "complete.obs")^2
+p <- ggplot(df_val, aes(x = predicted, y = referenced)) +
+  geom_abline(slope = 1, intercept = 0, colour = "red", linewidth = 0.8) +
+  geom_point(
+    colour = "#F0AD00", size = 3, alpha = 0.5,
+    aes(
+      text = paste0(
+        "Predicted OC: ", round(predicted, 2),
+        "\nReference OC: ", round(referenced, 2)
+      )
+    )
+  ) +
+  annotate(
+    "text",
+    x = xy_lims[1] + 0.12 * diff(xy_lims),
+    y = xy_lims[2] - 0.09 * diff(xy_lims),
+    label = paste0("R² = ", round(r2, 2), "\nRMSE = ", round(rmse, 2), "%"),
+    hjust = 0, vjust = 1, size = 4
+  ) +
+  coord_equal(xlim = xy_lims, ylim = xy_lims) +
+  labs(x = "Predicted OC (%)", y = "Reference OC (%)") +
+  theme_bw()
 
-plot_ly() |>
-  add_segments(
-    x = xy_lims[1], xend = xy_lims[2],
-    y = xy_lims[1], yend = xy_lims[2],
-    line = list(color = "rgba(128,128,128,0.9)", width = 1.5, dash = "dash"),
-    hoverinfo = "skip",
-    showlegend = FALSE
-  ) |>
-  add_markers(
-    x = ~predicted,
-    y = ~referenced,
-    marker = list(
-      color = "rgba(55, 126, 184, 0.75)",
-      size  = 8,
-      line  = list(color = "rgba(55, 126, 184, 1)", width = 0.5)
-    ),
-    text = ~paste0(
-      "Predicted OC: ", round(predicted, 2), "<br>",
-      "Reference OC: ", round(referenced, 2)
-    ),
-    hoverinfo = "text",
-    showlegend = FALSE
-  ) |> 
+ggplotly(p, tooltip = "text") |>
   layout(
-    title = list(text = "External validation", font = list(size = 14)),
-    xaxis = list(
-      title     = "Predicted OC",
-      range     = xy_lims,
-      gridcolor = "rgba(204,204,204,0.6)",
-      zeroline  = FALSE
-    ),
-    yaxis = list(
-      title       = "Reference OC",
-      range       = xy_lims,
-      gridcolor   = "rgba(204,204,204,0.6)",
-      zeroline    = FALSE,
-      scaleanchor = "x",
-      scaleratio  = 1
-    ),
-    plot_bgcolor  = "white",
-    paper_bgcolor = "white",
-    annotations = list(list(
-      x         = xy_lims[1] + 0.05 * diff(xy_lims),
-      y         = xy_lims[2] - 0.05 * diff(xy_lims),
-      text      = paste0("R² = ", round(r2, 3), "<br>RMSE = ", round(rmse, 3)),
-      showarrow = FALSE,
-      align     = "left",
-      font      = list(size = 12),
-      xanchor   = "left",
-      yanchor   = "top"
-    ))
+    yaxis = list(scaleanchor = "x", scaleratio = 1),
+    width = 570,
+    height = 570
   )
 ```
 
+</div>
 
 
 ## Validate (externally) [3/3]
-
-<br> 
 
 ```{r}
 cat("R2 =", round(cor(y_hat$predictions, mlocal_val$OC)^2, 3), "\n")
 cat("RMSE =", round(mean((y_hat$predictions - mlocal_val$OC)^2)^0.5, 3), "\n")
 ```
 
+Or
+
+```{r}
+val_results <- validate_prediction(
+  prediction = y_hat, 
+  reference = mlocal_val$OC
+)
+val_results$validation$ncomp_4$val_stats
+```
+
+
+
+## What are we trying to do?
+
+<br>
+
+```{r}
+#| echo: false
+#| eval: true
+#| fig-align: center
+library(DiagrammeR)
+grViz("
+digraph pipeline {
+  graph [rankdir=LR, bgcolor=transparent]
+  node [shape=box, style=filled, fillcolor='#F5F5F5', fontname=Helvetica, fontsize=14]
+  A [label='Raw\\nspectrum']
+  B [label=<<I>g</I><BR/>(signal processing)>, fillcolor='#CCEEFF']
+  C [label='Preprocessed\\nspectrum']
+  D [label=<<I>f</I><BR/>(model)>, fillcolor='#FFD9D9']
+  E [label='ŷ']
+  A -> B -> C -> D -> E
+}
+")
+```
+
+## Deploy the model 
+
+<br>
+<br>
+<br>
+
+```{r}
+#| eval: false
+proxiscout_write_model(
+  one_model, 
+  file = "outputs/local_oc_model.json"
+)
+```
+
+- Collect the file and upload it...
+
+# Session 3: Extract relevant samples from spectral libraries {background-color="#000000"}
+
+## What are we trying to do now?  {background-color="#000000"}
+
+Imagine we only have few samples with reference values (as if we were just starting with a new project)...
+
+- __Local samples__: Only 30 samples with reference values (OC) and their corresponding spectra. However, <span style="color:#F0AD00;">many more with spectra but without reference values.</span>  
+
+- __Spectral library__: We have a spectral library with a considerable amount of calibration samples.
+
+> **GOAL:** We want to select the most relevant samples from the spectral library to build a calibration model for our local samples.
+
+
+## Two new files {background-color="#000000"}
+
+These files come from a soil spectral library from USA:
+
+```
+my_folder/
+├── data/
+│   ├── local-samples-spain/
+│   │   ├── local-spectra-cal.xlsx
+│   │   ├── local-properties-cal.xlsx
+│   │   ├── local-spectra-val.xlsx
+│   │   └── local-properties-val.xlsx
+│   └── spectral-library-usa/
+│       ├── spectral-library-spectra.xlsx
+│       └── spectral-library-properties.xlsx
+├── R/
+└── outputs/
+```
+[https://docs.soilspectroscopy.org/neospectra.html](https://docs.soilspectroscopy.org/neospectra.html)
+
+## Background
+
+@ramirez2026spectral
+
+<div class="pdf-embed">
+  <iframe
+    src="fig/when-spectral-libraries-r-too-complex-to-search.pdf"
+    width="100%"
+    height="900"
+    style="border: none;">
+  </iframe>
+</div>
+
+
+## A trivia example of _gesearch_
+
+- Topic: beers of the world
+
+- Groups: several groups of 5 people at the bar
+
+- Sessions: every Friday
+
+- Gens: persons
+
+- Individuals: groups
+
+- Evaluation period: every year
+
+
+::: {.callout-warning}
+After 1 year, there is an evaluation of every single person. The worst are expelled. 
+:::
+
+
+
+## 
+
+
+::: {.small-text}
+
+In this session we will be using `resemble` to search for the most relevant samples from the spectral library of USA to support the development of our models..
+
+<img src="fig/logo-resemble.png" width="30%" alt="resemble">
+
+```{r}
+#| eval: false
+install.packages("resemble")
+```
+
+and 
+
+```{r}
+#| eval: false
+library("resemble")
+```
+
+
+::: 
+
+## Searching for the best training samples
+
+The _gesearch_ algorithm is based on a novel evolutionary search method that allow us to identify the most relevant training samples from a large spectral library to be used to build linear models for a given target domain. 
+
+In the `resemble` package, the `gesearch()` function implements this search method.
+
+```{r}
+#| eval: false
+help(gesearch)
+```
+
+
+## Read the new files
+
+
+```{r}
+mlibrary <- proxiscout_read_data(
+  "data/spectral-library-usa/spectral-library-spectra.xlsx",
+  references_file = "data/spectral-library-usa/spectral-library-properties.xlsx"
+)
+```
+
+::: {.small-text}
+
+Check how many rows and variables are in the loaded data:
+
+```{r}
+dim(mlibrary)
+```
+
+::: 
+
+## Inspect the spectral library data
+
+
+::: {.small-text}
+
+Check the name of the variables in the loaded data:
+
+::: 
+
+```{r}
+colnames(mlibrary)
+```
+
+::: {.small-text}
+
+View the table:
+
+::: 
+
+```{r}
+#| eval: false
+View(mlibrary)
+```
+
+
+## Raw spectral data
+
+<br>
+
+```{r}
+#| echo: false
+library(ggplot2)
+library(plotly)
+
+# Extract wavelengths
+wavs <- as.numeric(colnames(mlibrary$spc))
+
+# Prepare calibration data
+df_library <- data.frame(
+  sample = rep(1:nrow(mlibrary$spc), each = ncol(mlibrary$spc)),
+  wavenumber = rep(wavs, times = nrow(mlibrary$spc)),
+  reflectance = as.vector(t(mlibrary$spc)),
+  dataset = "Spectral library"
+)
+
+# Combine
+df_spectra <- rbind(df_library)
+
+# Create ggplot with facets
+p <- ggplot(df_spectra, aes(x = wavenumber, y = reflectance, group = sample)) +
+  geom_line(aes(colour = dataset), linewidth = 0.3, alpha = 0.2) +
+  scale_x_reverse(limits = c(7500, 4000)) +
+  scale_colour_manual(
+    values = c("Spectral library" = "#F0AD00")
+  ) +
+  facet_wrap(~dataset, nrow = 1) +
+  labs(
+    x = "Wavenumber (cm⁻¹)",
+    y = "Reflectance"
+  ) +  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold"),
+    axis.title = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+
+# Make interactive
+ggplotly(p, tooltip = c("x", "y", "colour")) |> 
+  layout(
+    hovermode = "x unified",
+    width = 990,
+    height = 450
+  )
+```
+
+
+## Second derivative
+
+```{r}
+#| label: chk00
+second_derivative_recipe <- preprocess_recipe(
+  prep_transform(to = "absorbance"),
+  prep_derivative(m = 2, w = 9, p = 2, algorithm = "savitzky-golay"), 
+  device = "proxiscout"
+)
+my_second_derivative <- process(mlibrary$spc, second_derivative_recipe)
+```
+
+```{r}
+#| echo: false
+library(ggplot2)
+library(plotly)
+
+# Extract wavelengths
+wavs <- as.numeric(colnames(my_second_derivative))
+
+# Prepare calibration data
+df_library_der <- data.frame(
+  sample = rep(1:nrow(my_second_derivative), each = ncol(my_second_derivative)),
+  wavenumber = rep(wavs, times = nrow(my_second_derivative)),
+  reflectance = as.vector(t(my_second_derivative)),
+  dataset = "Spectral library"
+)
+
+# Combine
+df_spectra <- rbind(df_library_der)
+
+# Create ggplot with facets
+p <- ggplot(df_spectra, aes(x = wavenumber, y = reflectance, group = sample)) +
+  geom_line(aes(colour = dataset), linewidth = 0.3, alpha = 0.2) +
+  scale_x_reverse(limits = c(7500, 4000)) +
+  scale_colour_manual(
+    values = c("Spectral library" = "#F0AD00")
+  ) +
+  facet_wrap(~dataset, nrow = 1) +
+  labs(
+    x = "Wavenumber (cm⁻¹)",
+    y = "2nd derivative (absorbance)"
+  ) +  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold"),
+    axis.title = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  ) + 
+  geom_vline(xintercept = 6000, colour = "red", linewidth = 0.8) 
+
+# Make interactive
+ggplotly(p, tooltip = c("x", "y", "colour")) |> 
+  layout(
+    hovermode = "x unified",
+    width = 990,
+    height = 470
+  )
+```
+
+
+## 
+
+::: {.small-text}
+to plot the raw spectra of the library...
+:::
+```{r}
+#| eval: false
+ps_wavs <- get_proxiscout_wavenumbers()
+matplot(
+  ps_wavs,
+  t(mlibrary$spc), 
+  type = "l", 
+  lty = 1,
+  col = rgb(0.941, 0.678, 0, 0.3),
+  xlab = expression("Wavenumber ("*cm^{-1}*")"),
+  ylab = "Reflectance",
+  main = "Raw spectra",
+  xlim = c(7500, 4000)
+)
+```
+
+
+## 
+
+::: {.small-text}
+and to plot the second derivative spectra:
+:::
+
+```{r}
+#| eval: false
+matplot(
+  as.numeric(colnames(my_second_derivative)),
+  t(my_second_derivative), 
+  type = "l", 
+  lty = 1,
+  xlab = expression("Wavenumber ("*cm^{-1}*")"),
+  col = rgb(0.941, 0.678, 0, 0.3),
+
+  ylab = "2nd derivative (absorbance)",
+  main = "Processed spectra",
+  xlim = c(7500, 4000)
+)
+abline(v = 6000, col = "red")
+
+```
+
+
+
+## Simulation  
+
+
+::: {.small-text}
+As we had just few calibration samples with reference values (30), the rest only with spectra...
+:::
+
+```{r}
+#| label: chk1
+#| eval: false
+mlocal_cal$ref
+mlocal_cal$OC
+```
+
+::: {.small-text}
+from the original data, overwrite organic carbon values with missing values (e.g. `NA`s)... 
+::: 
+
+```{r}
+#| label: chk2
+#| eval: true
+#| results: 'hide'
+mlocal_cal <- proxiscout_read_data(
+  file = "data/local-samples-spain/local-spectra-cal.xlsx", 
+  references_file = "data/local-samples-spain/local-properties-cal.xlsx"
+)
+
+mlocal_cal$OC[mlocal_cal$ref == 0] <- NA
+
+mlocal_val <- proxiscout_read_data(
+  file = "data/local-samples-spain/local-spectra-val.xlsx", 
+  references_file = "data/local-samples-spain/local-properties-val.xlsx"
+)
+```
+
+<br>
+
+##
+
+```{r}
+#| label: chk3
+#| eval: false
+View(mlocal_cal)
+```
+
+<br>
+
+```{r}
+#| label: chk4
+#| eval: false
+View(mlocal_cal[!is.na(mlocal_cal$OC), ])
+```
+
+
+## Prepare to execute the serach in parallel in R 
+
+The search is computationally intensive. The `gesearch()` function supports parallel computing. 
+
+Load the `doParallel` package
+
+
+```{r}
+#| label: chk5
+#| results: 'hide'
+# Parallel processing
+library(doParallel)
+
+# !!!!!
+parallel::detectCores() 
+```
+
+<br>
+
+```{r}
+#| label: chk6
+n_cores <- 4
+cl <- makeCluster(n_cores)
+registerDoParallel(cl)
+```
+
+
+## Wavenumber trimming
+
+<br> 
+
+Here, we define the wavenumber from which we will be trimming our spectral data:
+
+```{r}
+#| label: chk7
+wav_lim <- 6000
+```
+
+and extract (again, just in case) the vector of wavenumbers:
+```{r}
+#| label: chk8
+wavs <- as.numeric(colnames(mlocal_cal$spc))
+```
+
+Get a vector of `TRUE` for the wavenumbers to keep and `FALSE` for the wavenumbes to ignore:
+
+```{r}
+#| label: chk9
+#| results: 'hide'
+wav_sel <- wavs < wav_lim
+wav_sel
+```
+
+
+## Search!!!
+
+
+
+::: {.small-text}
+We will use our previous preprocessing recipe identified as the optimal (`recipe_5`):
+:::
+
+```{r}
+#| label: chk10
+#| echo: false
+#| eval: true
+#| messages: false
+library(resemble)
+
+search_recipe <- preprocess_recipe(
+  prep_resample(grid = "proxiscout"),
+  prep_transform(to = "absorbance"),
+  prep_derivative(m = 2, w = 11, p = 2, algorithm = "savitzky-golay"),
+  prep_snv(),
+  device = "proxiscout" 
+)
+
+wav_lim <- 6000
+wavs <- as.numeric(colnames(mlocal_cal$spc))
+search_results <- gesearch(
+  Xr = process(mlibrary$spc[, wavs < wav_lim], search_recipe), 
+  Yr = mlibrary$OC,
+  Xu = process(mlocal_cal$spc[, wavs < wav_lim], search_recipe), 
+  Yu = mlocal_cal$OC,
+  Yu_lims = c(0.02, 15),
+  k = 30, b = 200, retain = 0.95,
+  target_size = 120,
+  fit_method = fit_pls(ncomp = 10, method = "mpls"),
+  optimization = c("similarity", "reconstruction", "response", "range"),
+  control = gesearch_control(retain_by = "probability"),
+  seed = 1410, 
+  pchunks = 5, 
+  verbose = FALSE
+)
+```
+
+```{r}
+#| label: chk11
+#| eval: false
+search_recipe <- preprocess_recipe(
+  prep_resample(grid = "proxiscout"),
+  prep_transform(to = "absorbance"),
+  prep_derivative(m = 2, w = 11, p = 2, algorithm = "savitzky-golay"),
+  prep_snv(),
+  device = "proxiscout" 
+)
+
+search_results <- gesearch(
+  Xr = process(mlibrary$spc[, wav_sel], search_recipe), 
+  Yr = mlibrary$OC,
+  Xu = process(mlocal_cal$spc[, wav_sel], search_recipe), 
+  Yu = mlocal_cal$OC,
+  Yu_lims = c(0.02, 15), # New!!
+  k = 30, b = 200, retain = 0.95, # the key gesearch parameters
+  target_size = 80,
+  fit_method = fit_pls(ncomp = 10, method = "mpls"),
+  optimization = c("similarity", "reconstruction", "response", "range"),
+  control = gesearch_control(retain_by = "probability"),
+  seed = 1410, 
+  pchunks = 5
+)
+```
+
+## 
+
+::: {.small-text}
+stop using parallel computing:
+::: 
+
+```{r}
+#| label: chk12
+#| messages: true
+stopCluster(cl)
+registerDoSEQ()
+```
+
+# Inspect the _gesearch_ results
+
+```{r}
+#| label: chk13
+#| eval: false
+search_results
+```
+
+
+```{r}
+#| label: chk14
+#| eval: false
+plot(search_results)
+```
+
+## Use the _gesearch_ model
+
+The `gesearch()` function builds a model with the samples found in combination with the samples from the local domain used to guide the search. SO we can use that model to predict the validation samples:
+
+
+```{r}
+#| label: chk15
+#| eval: false
+my_gesearch_predictions <- predict(
+  search_results, 
+  newdata = process(mlocal_val$spc[, wavs < wav_lim], search_recipe)
+)[[1]]
+
+my_gesearch_predictions
+```
+
+We could go on and do the validation directly here, but this will be using `resemble`... Since we want to deploy our model, this is way easier if we switch back to `proximetricsR`.
+
+## Build the hybrid model with `proximetricsR`
+
+`search_results$indices` contains the indices of the samples found in the spectral library, so, create a hybrid modelling dataset (the samples found + the few samples from the local domain):
+
+```{r}
+#| label: chk16
+#| eval: true
+
+mlibrary_selected <- mlibrary[search_results$indices, ]
+
+# add variables that are in the local that are not in the library
+mlibrary_selected$ref <- NA
+mlibrary_selected$OM <- NA
+
+mlibrary_selected <- mlibrary_selected[, colnames(mlocal_cal)]
+
+mhybrid_cal <- rbind(
+  mlocal_cal, 
+  mlibrary_selected
+)
+```
+
+
+## 
+
+<br>
+<br>
+<br>
+
+```{r}
+#| label: chk17
+
+my_model_hybrid <- calibrate_models(
+  formulas = my_formulas,
+  data = mhybrid_cal, # just this is different to what we did previously
+  preprocess_recipes = my_preprocessings,
+  methods = my_fittings,
+  control = my_control,
+  verbose = FALSE
+)
+
+one_model_hybrid <- my_model_hybrid$final_models$`OC ~ spc`
+y_hat_hybrid <- predict(one_model_hybrid, newdata = mlocal_val, verbose = FALSE)
+```
+
+## 
+
+<br>
+<br>
+<br>
+
+```{r}
+#| label: chk18
+#| eval: false
+axes_range <- range(c(y_hat_hybrid$predictions, mlocal_val$OC), na.rm = TRUE)
+
+plot(
+  y_hat_hybrid$predictions, 
+  mlocal_val$OC, 
+  xlab = "Predicted OC (%)", 
+  ylab = "Reference OC (%)", 
+  main = "External validation",
+  xlim = axes_range,
+  ylim = axes_range, 
+  pch = 16, 
+  cex = 2, 
+  col = "#F0AD00"
+)
+abline(0, 1, col = "red")
+```
+
+##   
+
+<div style="display: flex; justify-content: center;">
+
+```{r}
+#| label: chk19
+#| echo: false
+library(ggplot2)
+library(plotly)
+
+df_val <- data.frame(
+  predicted = y_hat_hybrid$predictions[, 1],
+  referenced = mlocal_val$OC
+)
+
+xy_lims <- range(c(df_val$predicted, df_val$referenced), na.rm = TRUE)
+rmse <- sqrt(mean((df_val$predicted - df_val$referenced)^2, na.rm = TRUE))
+r2 <- cor(df_val$predicted, df_val$referenced, use = "complete.obs")^2
+
+p <- ggplot(df_val, aes(x = predicted, y = referenced)) +
+  geom_abline(slope = 1, intercept = 0, colour = "red", linewidth = 0.8) +
+  geom_point(
+    colour = "#F0AD00", size = 3, alpha = 0.5,
+    aes(
+      text = paste0(
+        "Predicted OC: ", round(predicted, 2),
+        "\nReference OC: ", round(referenced, 2)
+      )
+    )
+  ) +
+  annotate(
+    "text",
+    x = xy_lims[1] + 0.12 * diff(xy_lims),
+    y = xy_lims[2] - 0.09 * diff(xy_lims),
+    label = paste0("R² = ", round(r2, 2), "\nRMSE = ", round(rmse, 2), "%"),
+    hjust = 0, vjust = 1, size = 4
+  ) +
+  coord_equal(xlim = xy_lims, ylim = xy_lims) +
+  labs(x = "Predicted OC (%)", y = "Reference OC (%)") +
+  theme()
+
+ggplotly(p, tooltip = "text") |>
+  layout(
+    yaxis = list(scaleanchor = "x", scaleratio = 1),
+    width = 570,
+    height = 570
+  )
+```
+
+</div>
+
+##
+
+```{r}
+proxiscout_write_model(one_model_hybrid, file = "outputs/hybrid_oc_model.json")
+```
+
 ## References {.scrollable}
 
 ::: {#refs}
 :::
+
+# <span style="font-size: 4em; display: flex; justify-content: center;">Peace</span> {background-color="#000000"}
 
